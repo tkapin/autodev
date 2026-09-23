@@ -1,0 +1,10 @@
+__pycache__/
+.autodev/
+.trial-output/
+*.pyc
+node_modules/
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-*

@@ -1,0 +1,11 @@
+{
+  "name": "tkapin-autodev",
+  "version": "0.1.1",
+  "description": "From intent to verified software: a lightweight GM-led development loop with project-local learning.",
+  "author": {
+    "name": "tkapin"
+  },
+  "repository": "https://github.com/tkapin/autodev",
+  "agents": "agents/",
+  "skills": "skills/"
+}
