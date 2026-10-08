@@ -7,11 +7,12 @@ development system. It will coordinate specialized AI responsibilities across
 the software lifecycle, from clarifying intent to delivering software and
 improving the development process itself.
 
-**Status:** v0.1.1 is implemented and has been validated in both target hosts:
+**Status:** v0.2.0 is implemented and validated for both target hosts:
 an `autodev` skill, GM and supporting role agents, and Python/SQLite coordination
-tooling. Offline checks, two live delivery/learning trials, and fresh app skill
-discovery completed. Final independent review also produced three corrected
-edge cases with regression coverage. See [validation evidence and limits](VALIDATION.md).
+tooling. It adds focused evidence retrieval, reliable UTF-8 CLI output, explicit
+audit ordering, and mechanism-based repair/preflight guidance. Offline checks,
+independent source review/testing, earlier live delivery trials, and app skill
+discovery are documented in [validation evidence and limits](VALIDATION.md).
 The charter remains authoritative; the implemented scope is defined in
 [the v0.1 implementation spec](implementation-spec.md).
 

@@ -576,6 +576,207 @@ class StoreTests(unittest.TestCase):
         self.call("feedback", "auditor", sprint=sprint, summary="Audit itself was straightforward")
         self.assertEqual(self.store.execute("status")["sprints"][0]["audit"], "complete")
 
+    def test_gm_feedback_before_audit_avoids_reaudit_without_waiving_late_evidence(self):
+        sprint, _ = self.finished()
+        self.call("feedback", sprint=sprint, summary="GM handoff before audit")
+        self.audit(sprint, limitations=["Supplemental BA feedback unavailable"])
+        state = self.store.execute("context")["state"]
+        self.assertEqual(len(state["sprints"][0]["audits"]), 1)
+        self.assertEqual(self.store.execute("status")["sprints"][0]["audit"], "complete")
+        self.call("feedback", sprint=sprint, summary="New evidence must not be suppressed")
+        self.assertEqual(self.store.execute("status")["sprints"][0]["audit"], "stale")
+        with self.assertRaises(ContractError):
+            self.call("start-sprint", goal="Cannot continue on a stale audit")
+
+    def test_focus_matches_authoritative_work_dependencies_and_active_guidance(self):
+        item = self.proposal(content="Use approved project preflight; retain independent checks")
+        self.evaluate(item)
+        self.call("adopt-improvement", improvement=item["id"])
+        sprint = self.sprint()
+        root = self.call("add-task", "pm", sprint=sprint, title="Root", paths=["root.py"])
+        middle = self.call("add-task", "pm", sprint=sprint, title="Middle", paths=["middle.py"],
+                           depends_on=[root["id"]])
+        leaf = self.call("add-task", "pm", sprint=sprint, title="Leaf", paths=["leaf.py"],
+                         depends_on=[middle["id"]])
+        other = self.call("add-task", "pm", sprint=sprint, title="Other", paths=["other.py"])
+        self.call("feedback", sprint=sprint, task=root["id"], summary="Dependency warning")
+        before = self.store.execute("context")
+        history = self.store.execute("journal")
+        packet = self.store.execute("focus", {"task": leaf["id"]})
+        state = before["state"]
+        self.assertTrue(packet["partial"])
+        self.assertTrue(packet["package_current"])
+        self.assertEqual(packet["revision"], before["revision"])
+        self.assertEqual(packet["policy"], state["policy"])
+        self.assertEqual(packet["baseline"], state["baseline"])
+        self.assertEqual(packet["scope_digests"], before["scope_digests"])
+        self.assertEqual(packet["sprint"]["tasks"], state["sprints"][0]["tasks"][:3])
+        self.assertEqual(packet["sprint"]["omitted_task_ids"], [other["id"]])
+        self.assertEqual(packet["feedback"]["items"], state["feedback"])
+        self.assertEqual(packet["active_improvements"]["guidance:pm"],
+                         state["improvements"][item["id"]])
+        self.assertEqual(self.store.execute("focus", {"sprint": sprint})["sprint"]["tasks"],
+                         state["sprints"][0]["tasks"])
+        self.assertEqual(before, self.store.execute("context"))
+        self.assertEqual(history, self.store.execute("journal"))
+        self.call("artifact", "ba", kind="spec", content="Unapproved new scope")
+        self.assertFalse(self.store.execute("focus", {"task": leaf["id"]})["package_current"])
+
+    def test_focus_pages_preserve_failed_attempts_and_unrelated_authority_events(self):
+        sprint = self.sprint()
+        task, revision, fingerprint = self.submitted(sprint)
+        self.call("review", "tester", task=task, revision=revision, digest=fingerprint,
+                  passed=False, evidence="Retained-handle race reproduced despite green suite")
+        self.call("claim", "developer", task=task, revision=revision)
+        for index in range(7):
+            self.call("feedback", sprint=sprint, summary=f"Complete evidence {index}")
+        self.call("pause", reason="Authority decision unrelated to a specific task")
+        before = self.store.execute("context")
+        request = {"task": task, "limit": 3}
+        events, feedback = [], []
+        while True:
+            packet = self.store.execute("focus", request)
+            self.assertLessEqual(len(packet["events"]["items"]), 3)
+            self.assertLessEqual(len(packet["feedback"]["items"]), 3)
+            events.extend(packet["events"]["items"])
+            feedback.extend(packet["feedback"]["items"])
+            if not packet["events"]["has_more"] and not packet["feedback"]["has_more"]:
+                break
+            request["expected_revision"] = packet["revision"]
+            request["after"] = events[-1]["seq"] if events else 0
+            request["feedback_after"] = len(feedback)
+        self.assertEqual(events, self.store.execute("journal")["events"])
+        self.assertEqual(feedback, before["state"]["feedback"])
+        failure = next(event for event in events if event["action"] == "review")
+        self.assertFalse(failure["body"]["request"]["passed"])
+        self.assertIn("Retained-handle", failure["body"]["request"]["evidence"])
+        self.assertEqual(packet["sprint"]["tasks"][0]["attempts"], 2)
+        self.assertEqual(packet["sprint"]["tasks"][0]["reviews"], {})
+        self.assertEqual(packet["paused"], before["state"]["paused"])
+        self.assertEqual(packet["events"]["total"], len(events))
+        self.assertEqual(packet["feedback"]["total"], len(feedback))
+        self.assertEqual(before, self.store.execute("context"))
+        with self.assertRaises(ContractError):
+            self.call("claim", "developer", task=task, revision=2)
+
+    def test_focus_retains_all_audit_findings_and_dispositions(self):
+        sprint, _ = self.finished()
+        report = self.audit(sprint, findings=[{
+            "id": "provenance", "summary": "Artifact identity unresolved",
+            "evidence": "Synthetic installed-byte mismatch", "blocking": True,
+        }])
+        self.call("disposition", scope=sprint, audit=report["id"], finding="provenance",
+                  decision="scheduled", reason="Retained as unresolved")
+        self.audit(sprint)
+        packet = self.store.execute("focus", {"sprint": sprint})
+        self.assertEqual(packet["sprint"]["audits"],
+                         self.store.execute("context")["state"]["sprints"][0]["audits"])
+        self.assertEqual(packet["sprint"]["audit_status"], "complete")
+        with self.assertRaises(ContractError):
+            self.call("start-sprint", goal="Cannot bypass old blocking findings")
+
+    def test_focus_validates_selectors_limits_and_revision_bound_cursors(self):
+        sprint = self.sprint()
+        revision = self.store.execute("context")["revision"]
+        invalid = [
+            {}, {"task": "task-404"}, {"sprint": "sprint-404"},
+            {"sprint": sprint, "task": "task-1"}, {"sprint": []},
+            {"sprint": sprint, "unknown": True}, {"sprint": sprint, "limit": 0},
+            {"sprint": sprint, "limit": 201}, {"sprint": sprint, "limit": True},
+            {"sprint": sprint, "after": -1}, {"sprint": sprint, "after": 1},
+            {"sprint": sprint, "feedback_after": 1},
+            {"sprint": sprint, "expected_revision": revision + 1},
+            {"sprint": sprint, "after": revision + 1, "expected_revision": revision},
+            {"sprint": sprint, "feedback_after": 1, "expected_revision": revision},
+        ]
+        before = self.store.execute("context")
+        for request in invalid:
+            with self.subTest(request=request), self.assertRaises(ContractError):
+                self.store.execute("focus", request)
+        empty = self.store.execute("focus", {
+            "sprint": sprint, "after": revision, "expected_revision": revision, "limit": 200,
+        })
+        self.assertEqual(empty["events"]["items"], [])
+        self.assertEqual(empty["feedback"]["items"], [])
+        self.assertIsNone(empty["events"]["next_after"])
+        self.assertIsNone(empty["feedback"]["next_feedback_after"])
+        self.assertEqual(before, self.store.execute("context"))
+        self.call("feedback", sprint=sprint, summary="New state between pages")
+        with self.assertRaisesRegex(ContractError, "Stale focus revision"):
+            self.store.execute("focus", {"sprint": sprint, "after": 1, "expected_revision": revision})
+
+    def test_focus_history_pages_beyond_legacy_journal_ceiling(self):
+        sprint = self.sprint()
+        for index in range(205):
+            self.call("feedback", sprint=sprint, summary=f"Event {index}")
+        first = self.store.execute("focus", {"sprint": sprint, "limit": 200})
+        second = self.store.execute("focus", {
+            "sprint": sprint, "limit": 200, "expected_revision": first["revision"],
+            "after": first["events"]["next_after"],
+            "feedback_after": first["feedback"]["next_feedback_after"],
+        })
+        self.assertFalse(second["events"]["has_more"])
+        self.assertFalse(second["feedback"]["has_more"])
+        events = first["events"]["items"] + second["events"]["items"]
+        self.assertEqual(len(events), first["events"]["total"])
+        self.assertEqual(len({event["seq"] for event in events}), len(events))
+        self.assertEqual(len(first["feedback"]["items"] + second["feedback"]["items"]), 205)
+
+    def test_focus_excludes_past_runs_but_keeps_global_history_available(self):
+        sprint, fingerprint = self.finished()
+        self.call("feedback", sprint=sprint, summary="Past-run feedback")
+        self.audit(sprint)
+        self.call("accept", "client", sprint=sprint, digest=fingerprint,
+                  evidence="Synthetic Client acceptance of exact artifact")
+        self.call("finish-run", outcome="success", reason="Synthetic run complete")
+        self.audit("run")
+        self.call("close", handover="Synthetic verified handover")
+        self.call("new-run", intent="Next synthetic increment")
+        sprint = self.sprint()
+        packet = self.store.execute("focus", {"sprint": sprint})
+        self.assertEqual(packet["run"], 2)
+        self.assertTrue(all(event["run"] == 2 for event in packet["events"]["items"]))
+        self.assertEqual(packet["feedback"]["items"], [])
+        self.assertTrue(any(event["run"] == 1 for event in self.store.execute("journal")["events"]))
+        self.assertTrue(self.store.execute("context")["state"]["past_runs"])
+
+    def test_focus_reduces_fixture_payload_without_truncating_selected_evidence(self):
+        sprint = self.sprint()
+        self.call("artifact", "ba", kind="spec", content="Detailed fixture requirement. " * 1000)
+        for index in range(25):
+            self.call("feedback", sprint=sprint, summary=f"Evidence {index}: " + "x" * 100)
+        context = self.store.execute("context")
+        packet = self.store.execute("focus", {"sprint": sprint})
+        self.assertEqual(len(packet["events"]["items"]), 20)
+        self.assertEqual(len(packet["feedback"]["items"]), 20)
+        self.assertTrue(packet["events"]["has_more"])
+        self.assertTrue(packet["feedback"]["has_more"])
+        self.assertLess(len(json.dumps(packet)), len(json.dumps(context)))
+        self.assertEqual(packet["feedback"]["items"], context["state"]["feedback"][:20])
+        self.assertEqual(packet["artifacts"]["spec"][-1]["digest"],
+                         context["state"]["artifacts"]["spec"][-1]["digest"])
+        self.assertFalse(packet["package_current"])
+
+    def test_cli_pipes_unicode_json_and_errors_as_utf8(self):
+        sprint = self.sprint()
+        self.call("feedback", sprint=sprint, summary="Diagnostic \u2192 caf\u00e9 \u4e2d\u6587")
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        for action, data in [("context", {}), ("focus", {"sprint": sprint}), ("inspect", {})]:
+            result = subprocess.run(
+                [sys.executable, str(SCRIPTS / "autodev.py"), action, "--project", str(self.project),
+                 "--data", json.dumps(data)], capture_output=True, env=env, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8"))
+            self.assertIn("Diagnostic \u2192 caf\u00e9 \u4e2d\u6587", result.stdout.decode("utf-8"))
+            if action != "inspect":
+                json.loads(result.stdout.decode("utf-8"))
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "autodev.py"), "focus", "--project", str(self.project),
+             "--data", json.dumps({"task": "\u2192"})], capture_output=True, env=env, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("error", json.loads(result.stderr.decode("utf-8")))
+
     def test_cli_reads_json_files_and_reports_errors_nonzero(self):
         request = self.project / "request.json"
         request.write_text(json.dumps({"actor": actor("gm"), "goal": "No approval"}), encoding="utf-8")

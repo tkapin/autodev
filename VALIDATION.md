@@ -1,4 +1,42 @@
-# AutoDev v0.1.1 validation
+# AutoDev v0.2.0 validation
+
+## v0.2.0 source improvements, 2026-09-29
+
+The source now adds opt-in `focus` reads and UTF-8 CLI output, with guidance for
+pre-audit feedback ordering, mechanism-based repair diagnosis, and reuse of
+authorized project preflight recipes. This section describes the independently
+evaluated v0.2.0 source change. It is not a new live delivery trial.
+
+Separate GPT-6 Astra Reviewer and GPT-5.4 Tester contexts assessed the exact
+10-file implementation manifest, checking its SHA-256 hashes before and after.
+Both returned PASS with no unresolved blockers. Independent unittest runs
+reported 55 tests: 54 passed and the existing Windows symlink-privilege test
+skipped. Junction rejection ran and passed. This documentation section was
+added afterward and was not part of that implementation manifest.
+
+Independent synthetic checks covered transitive dependencies, pagination and
+retained failed attempts, invalid/stale cursors, interleaved writes, multiple
+runs, active guidance, all audit findings/dispositions, Unicode output/errors
+under redirected cp1252 settings, and unchanged database/source bytes on reads.
+An unresolved finding from an earlier audit still blocked continuation after
+a later empty audit. Late GM feedback still invalidated completed audits.
+
+In one synthetic history, full context output was 61,019 bytes and the first
+task-focus page was 31,637 bytes. Paging recovered all 58 current-run events
+and 34 sprint feedback records exactly. Full artifact contents and past runs
+remain available through context/global journal. This measures payload size,
+not total retrieval cost, delivery speed, or model decision quality.
+
+The Reviewer compared old/new guidance on synthetic stale-binary, lockfile
+drift, AOT-overload, retained-handle race, and audit-order cases. New guidance
+makes provenance checks, diagnostic steps and GM feedback timing more explicit;
+several correct decisions were already required by the baseline. No native
+PIM scenarios were rerun, and no time/cost or live productivity benefit is
+claimed. The Tester's first large-inline-JSON probe exceeded Windows command
+length; using the documented request-file interface resolved that harness issue.
+
+PIM was not modified. Commit, push and installation evidence is recorded after
+those actions complete; the evaluation itself did not assume their success.
 
 ## Result
 

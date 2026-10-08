@@ -1,4 +1,4 @@
-# Using AutoDev v0.1.1
+# Using AutoDev v0.2.0
 
 ## Requirements
 
@@ -118,6 +118,14 @@ python "<skill-root>\scripts\autodev.py" status --project "<project>"
 python "<skill-root>\scripts\autodev.py" inspect --project "<project>"
 python "<skill-root>\scripts\autodev.py" help
 ```
+
+For bounded task evidence, call `focus` with an input such as
+`{"task":"task-3","limit":20}`. It returns current work and transitive dependencies,
+active guidance, audit obligations, and separate pages of sprint feedback and
+current-run events. It is explicitly partial, not a replacement for approved
+specifications or a complete audit. Follow its cursors with `expected_revision`;
+restart paging if the revision changes. Full `context` and global `journal`
+reads remain available. CLI output is UTF-8, including redirected Windows output.
 
 Mutations accept UTF-8 JSON via `--input <file>`. Prefer files over complex
 shell quoting. The [operating guide](tkapin-autodev/skills/autodev/references/operating-guide.md)

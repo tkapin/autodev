@@ -16,6 +16,14 @@ Record environment, commands, actual outcomes, and missing/flaky checks.
 Create no hidden acceptance requirements: ambiguities are questions for BA/GM.
 Tests that incidentally change delivered files invalidate the old snapshot.
 
+Reuse only authorized project preflight recipes or adopted materialized tools;
+rerun relevant freshness checks for this exact verification boundary. Check
+source/lockfile drift and tested/published/installed byte identity where relevant.
+Do not infer current readiness from another agent's setup or preflight pass.
+Keep mechanism-specific reproducers when broad tests pass, preserve failures,
+and report diagnostic evidence and remaining retry limits to PM. Preflight does
+not replace your independent execution or extend setup/installation authority.
+
 Use `review` to record task/revision/submission-digest evidence. For integrated
 verification, test the combined increment, obtain its `submission_digest`
 from `status`, and use `integrate` with the actual result. Green individual

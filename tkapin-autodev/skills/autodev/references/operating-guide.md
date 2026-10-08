@@ -94,12 +94,16 @@ if another actor changed it, reload and reconcile before retrying.
    `integrate` with sprint, `submission_digest` from `status`, passed, and
    evidence. GM can record `finish-sprint` success only after this passes.
    Failed/cancelled outcomes remain valid outcomes, not fabricated success.
-10. **Learn:** Each agent writes `feedback` with sprint and a concise summary.
-    GM commissions `audit`, dispositions every finding, and authorizes the next
-    increment or hands the exact verified result to the Client.
+10. **Learn:** Collect available role feedback, including GM's own handoff
+    feedback, before commissioning the audit. Once feedback and the sprint
+    outcome are recorded, read the current scope digest and dispatch the
+    Auditor. Disclose unavailable supplemental feedback as a limitation rather
+    than waiting indefinitely. GM dispositions every finding and authorizes
+    the next increment or hands the exact verified result to the Client.
 11. **Deliver:** Relay Client `accept` for the current sprint and integrated
-    digest. GM records `finish-run`, commissions the run audit, and `close`s
-    with handover evidence once required audits and dispositions are complete.
+    digest. Finish planned feedback and learning, record `finish-run`, then
+    capture the current run digest and commission the run audit. `close` with
+    handover evidence once required audits and dispositions are complete.
 
 File snapshots in v0.1 cover regular files supplied by the assignment. There
 is no deletion/rename manifest or sandbox-wide write tracking. Include every
@@ -108,9 +112,45 @@ diff to detect omissions. Treat missing or unexpected changes as a blocker.
 
 ## Review, audits, and rework
 
-Read `status` for task revisions and digests. `context` additionally returns full
-versioned artifacts and active improvement contents. `journal` returns up to
-200 events after an optional `after` sequence number; page until exhausted.
+Start with `status` for task revisions and digests, then `focus` for the assigned
+task or sprint. Use full `context` when the omitted artifact contents, other
+sprints, or past runs are needed. It includes all versioned artifacts and
+improvements. `journal` returns up to 200 global events after an optional
+`after` sequence number; page until exhausted.
+
+`focus` takes exactly one existing `task` or `sprint` ID, plus optional `limit`
+(1..200, default 20), `after` (event sequence, default 0), `feedback_after`
+(offset in selected-sprint feedback, default 0), and `expected_revision`.
+Unknown fields, invalid selectors, out-of-range cursors and invalid types are
+errors. Example request:
+
+```json
+{"task": "task-3", "limit": 20}
+```
+
+The response is explicitly partial. It includes policy/limits, current package
+versions and approval baseline, task attempts/revisions/submissions, transitive
+dependency tasks, all selected-sprint audits/dispositions, integration, run
+audits, scope digests, and active improvement contents. Artifact versions and
+digests point to full `context` contents. Task focus names omitted task IDs.
+It is not an audit-complete packet or permission to skip approved criteria.
+
+Feedback pages contain all feedback for the selected sprint, including other
+tasks and dependency feedback. Event pages deliberately contain all current-run
+journal events through the returned revision, not just task-tagged events:
+global authority decisions and cross-task failures must not disappear.
+Current task reviews are not attempt history; read event pages for failures
+that preceded reassignment or resubmission. No evidence strings are truncated.
+Other runs remain available through full context and the global journal.
+
+Each page reports `total`, `has_more`, and `next_after` or
+`next_feedback_after`. Advance each cursor independently; when one stream
+finishes, hold its cursor at the last event sequence or consumed feedback
+count while paging the other. Nonzero cursors require the first page's
+`expected_revision`. If state changes, restart from zero rather than mixing
+pages. All pages retain full current selected work; paging bounds event and
+feedback records, not total output bytes. Read-only calls do not record events.
+CLI stdout and stderr use UTF-8, including when piped on Windows.
 
 Every audit is against the `scope_digests` entry for its sprint or `run`. Required
 examination categories are `journal`, `work`, and `verification`. An `audit`
@@ -119,6 +159,12 @@ Each finding has `id`, `summary`, `evidence`, and boolean `blocking`.
 Complete means all three categories examined and no outstanding required
 examination, not "a report exists." Missing supplemental feedback is a disclosed
 limitation. A negative finding is not an incomplete audit.
+
+Do not suppress late feedback to keep an audit current. Non-Auditor feedback
+changes its scope and requires fresh examination; a bounded delta examination
+may suffice if the Auditor establishes what changed. Auditor-only feedback
+does not recursively invalidate its own audit. Ordering known feedback before
+dispatch avoids preventable re-audits, not legitimate follow-up work.
 
 GM uses `disposition` with scope, the originating audit ID, finding ID, `decision`
 (`resolved`, `deferred`, `rejected`, or `scheduled`), and evidence-bearing
@@ -192,3 +238,38 @@ still do. Older records without submission-order metadata remain readable; if
 different overlapping hashes cannot be ordered, the helper reports a
 `submission_blocker` and requires reassignment/resubmission and fresh
 verification instead of guessing.
+
+## Diagnosis, preflight, and communication
+
+Before another repair of a failed criterion, record the exact diagnostic or
+reproduction, a suspected mechanism grounded in code/environment evidence,
+and the smallest check that distinguishes it from plausible alternatives.
+Run that check before treating a repair as justified; preserve negative output
+even if a later broad suite is green. If the mechanism is still unknown, use a
+bounded diagnostic step or escalate, not a sequence of guessed patches.
+Report both remaining helper claim attempts and any assignment-local repair
+or command retry limit. Several command invocations can occur within one claim;
+neither counter replaces the other. Reassignment requires reconciled workers
+and effects and never resets the approved attempt ceiling.
+
+Reuse preflight commands documented by the project and authorized by the
+assignment, or independently evaluated/adopted project-local tools materialized
+through the existing helper. These are guidance-only references: the helper
+does not execute them, confer execution authority, or add a new preflight
+schema. Proposed tools are not executable merely because they exist.
+Name the command/tool digest, relevant environment identity, owned output
+roots, expected source/lockfile effects, and artifact provenance checks in the
+handoff. Do not copy credentials or private feed details into shared guidance.
+Project-specific SDK/feed/native packaging remains project tooling.
+
+Reuse the setup recipe, not an old pass. Rerun relevant freshness checks at the
+verification boundary and after environment, source, lockfile or output changes.
+Use before/after checks to expose drift and compare tested/published/installed
+bytes where applicable. A preflight is not a substitute for independent
+Reviewer/Tester checks or exact-submission/integration verification.
+
+Keep feedback to the decision, observed friction, evidence references and next
+owner; leave raw output in local evidence rather than repeating transcripts.
+Do not truncate or discard failures. Client updates belong at useful milestones,
+material exceptions or decisions, not every internal wait or status read.
+Less text or fewer calls is not evidence of better delivery.

@@ -21,7 +21,8 @@ ROLES = {"client", "gm", "ba", "architect", "pm", "developer", "reviewer", "test
 DEFAULT_MODELS = ["gpt-6-astra", "gpt-5.4", "gpt-5.5", "grok-4.6", "gemini-3.8-flash"]
 ARTIFACT_ROLES = {"spec": "ba", "architecture": "architect", "plan": "pm"}
 AUDIT_REQUIREMENTS = ["journal", "work", "verification"]
-READ_ACTIONS = {"status", "journal", "inspect", "context", "materialize"}
+READ_ACTIONS = {"status", "journal", "inspect", "context", "focus", "materialize"}
+FOCUS_FIELDS = {"task", "sprint", "after", "feedback_after", "limit", "expected_revision"}
 COMMANDS = {
     "init": ("gm client", "intent limits", "models"),
     "artifact": ("ba architect pm", "kind content", ""),
@@ -230,6 +231,8 @@ class Store:
 
     def read(self, action: str, data: dict) -> dict | str:
         revision, state = self.load()
+        if action == "focus":
+            return self.focus(revision, state, data)
         if action == "journal":
             after = number(data, "after") if "after" in data else 0
             with closing(self._connect()) as db:
@@ -293,6 +296,93 @@ class Store:
         lines += ["", f"Run audit: {summary['run_audit']}", "",
                   "Evidence is recorded, not inferred. Actor identities and approvals depend on the trusted host.", ""]
         return "\n".join(lines)
+
+    def focus(self, revision: int, state: dict, data: dict) -> dict:
+        unknown = set(data) - FOCUS_FIELDS
+        if unknown or len(set(data) & {"task", "sprint"}) != 1:
+            raise ContractError("focus requires exactly one task or sprint; "
+                                f"unknown fields={sorted(unknown)}")
+        after = number(data, "after") if "after" in data else 0
+        offset = number(data, "feedback_after") if "feedback_after" in data else 0
+        limit = number(data, "limit", 1) if "limit" in data else 20
+        if limit > 200 or after > revision:
+            raise ContractError("focus limit must be <= 200 and after <= current revision")
+        if (after or offset) and "expected_revision" not in data:
+            raise ContractError("Continuing focus pages requires expected_revision")
+        if "expected_revision" in data and number(data, "expected_revision") != revision:
+            raise ContractError("Stale focus revision; restart paging from current state")
+
+        engine = Engine(self, state, {"id": "observer", "role": "client"})
+        if "task" in data:
+            sprint, task = engine.task(text(data, "task"))
+            selected = {task["id"]}
+            pending = list(task["depends_on"])
+            while pending:
+                identifier = pending.pop()
+                if identifier not in selected:
+                    selected.add(identifier)
+                    pending.extend(engine.task(identifier)[1]["depends_on"])
+        else:
+            sprint = engine.sprint(text(data, "sprint"))
+            selected = {task["id"] for task in sprint["tasks"]}
+        feedback = [item for item in state["feedback"] if item["sprint"] == sprint["id"]]
+        if offset > len(feedback):
+            raise ContractError("feedback_after exceeds the selected sprint feedback count")
+        feedback_end = min(offset + limit, len(feedback))
+        # Keep run-wide events: failures and authority decisions can affect other tasks.
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT * FROM events WHERE run = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
+                (state["run"], after, revision, limit + 1),
+            ).fetchall()
+            event_count = db.execute(
+                "SELECT COUNT(*) FROM events WHERE run = ? AND seq <= ?",
+                (state["run"], revision),
+            ).fetchone()[0]
+        events = [dict(row) | {"actor": json.loads(row["actor"]), "body": json.loads(row["body"])}
+                  for row in rows[:limit]]
+        artifacts = {kind: [{"version": item["version"], "digest": item["digest"]}
+                            for item in versions] for kind, versions in state["artifacts"].items()}
+        baseline = state["baseline"]
+        return {
+            "revision": revision, "run": state["run"], "partial": True,
+            "selection": {key: data[key] for key in ("task", "sprint") if key in data},
+            "policy": state["policy"], "paused": state["paused"], "outcome": state["outcome"],
+            "acceptance": state["acceptance"], "closed": state["closed"], "baseline": baseline,
+            "current_versions": {kind: len(items) for kind, items in state["artifacts"].items()},
+            "package_current": bool(baseline and baseline["versions"] == {
+                kind: len(items) for kind, items in state["artifacts"].items()}),
+            "sprint": {key: value for key, value in sprint.items() if key != "tasks"} | {
+                "tasks": [task for task in sprint["tasks"] if task["id"] in selected],
+                "omitted_task_ids": [task["id"] for task in sprint["tasks"] if task["id"] not in selected],
+                "audit_status": engine.audit_status(sprint["id"]),
+                **engine.submission_status(sprint),
+            },
+            "run_audits": state["run_audits"], "run_audit_status": engine.audit_status("run"),
+            "scope_digests": engine.scope_digests(),
+            "active_improvements": {key: state["improvements"][identifier]
+                                    for key, identifier in state["active_improvements"].items()},
+            "artifacts": artifacts,
+            "feedback": {
+                "scope": sprint["id"], "items": feedback[offset:feedback_end], "total": len(feedback),
+                "has_more": feedback_end < len(feedback),
+                "next_feedback_after": feedback_end if feedback_end < len(feedback) else None,
+            },
+            "events": {
+                "scope": "current-run", "items": events, "total": event_count,
+                "has_more": len(rows) > limit,
+                "next_after": events[-1]["seq"] if len(rows) > limit else None,
+            },
+            "retrieval": {
+                "full_context": {"action": "context"},
+                "all_sprint_statuses": {"action": "status"},
+                "global_history": {"action": "journal", "data": {"after": 0}},
+                "note": "Partial read, not an audit-complete packet. Full context contains artifact "
+                        "contents, other sprints and past runs. Page events for retained failed "
+                        "evidence; current reviews are not attempt history. Bind subsequent focus "
+                        "pages to this revision, restarting if it changes.",
+            },
+        }
 
     def relative(self, value: str, *, scope: bool = False) -> str:
         if not isinstance(value, str) or not value.strip():

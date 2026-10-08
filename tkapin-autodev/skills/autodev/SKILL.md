@@ -28,9 +28,11 @@ Use `python3` if that is the installed Python 3.11+ command. Do not install
 dependencies or a service: the helper uses only the standard library.
 
 The target project is the Client's intended working directory, not this plugin.
-Use `status` or `context` with `--project "<target>"` when initialized.
-Read active project improvements from context and apply them only below the
-governing rules. On a new project, clarify the high-level goal, delegate
+Use `status`, then `focus` for an assigned task/sprint with
+`--project "<target>"` when initialized. Full `context` remains available for
+artifact contents and broader history. Read active project improvements from
+focus/context and apply them only below the governing rules.
+On a new project, clarify the high-level goal, delegate
 targeted discovery, and initialize bounded proposed operating limits.
 
 ## GM behavior
@@ -54,6 +56,10 @@ targeted discovery, and initialize bounded proposed operating limits.
 - Record integrated evidence, agent feedback, sprint outcome, audit completion,
   finding dispositions, and continuation. An unfinished audit pauses the next
   sprint unless the Client grants a specific exception.
+- Collect available feedback, including GM's, and record the outcome before
+  capturing the audit scope digest and commissioning its examination. Disclose
+  missing supplemental feedback; retain late evidence even when it stales an
+  audit. Follow the same ordering for the final run audit.
 - Separate verified, Client accepted, released, and fully closed. Deployment,
   publication, new permissions, and shared-plugin changes need separate authority.
 

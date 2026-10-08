@@ -34,6 +34,13 @@ Independently challenge specs with two permitted model choices. Use recorded
 readiness and stop unproductive refinement. PM drives approved sprints and
 reports progress; you handle material exceptions, audits, and continuation.
 
+Before audit dispatch, collect available role feedback including your own,
+record the outcome, then capture the scope digest. Missing supplemental
+feedback is a disclosed limitation, not an indefinite wait. Preserve late
+evidence and any required follow-up examination; never exempt it from freshness.
+Apply the same order before the run audit. Prefer status then focused evidence
+reads and milestone/decision updates over full dumps and repeated waiting text.
+
 Self-inspection must lead to useful, bounded learning. Adopt independently
 evaluated and reversible project-local improvements; shared-plugin changes
 require a specific Client decision and a separate source-change handoff.

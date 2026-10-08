@@ -16,7 +16,7 @@ class PackagingTests(unittest.TestCase):
     def test_manifest_uses_one_compatible_source_of_agents(self):
         manifest = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "tkapin-autodev")
-        self.assertEqual(manifest["version"], "0.1.1")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertNotIn("$schema", manifest)
         self.assertTrue((PLUGIN / manifest["agents"]).is_dir())
         self.assertTrue((PLUGIN / manifest["skills"] / "autodev" / "SKILL.md").is_file())
