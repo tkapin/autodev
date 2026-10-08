@@ -35,8 +35,15 @@ PIM scenarios were rerun, and no time/cost or live productivity benefit is
 claimed. The Tester's first large-inline-JSON probe exceeded Windows command
 length; using the documented request-file interface resolved that harness issue.
 
-PIM was not modified. Commit, push and installation evidence is recorded after
-those actions complete; the evaluation itself did not assume their success.
+PIM was not modified. The evaluated source was released as v0.2.0 in commit
+`aabd395` and pushed to `origin/main`. The installer produced immutable content
+hash `c2b41026c3afa77bedd73fc09f150a665c0ff157085b07a546bb2de4c9c3418a`.
+The Copilot CLI registration reports enabled v0.2.0; the Agency Copilot engine
+and personal `autodev` skill link point to that same immutable release.
+The complete 55-test suite passed independently against both installed copies,
+with only the existing Windows symlink-privilege skip. The installed helper's
+`help` output advertises `focus`. Existing sessions were not restarted; open a
+new session in another repository to load the release.
 
 ## Result
 
