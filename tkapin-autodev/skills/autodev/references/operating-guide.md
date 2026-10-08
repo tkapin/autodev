@@ -53,6 +53,50 @@ Use `help` for required fields, roles, and optional fields. Add
 `expected_revision` when a decision relies on a previously read state revision;
 if another actor changed it, reload and reconcile before retrying.
 
+### Client-authorized model policy updates
+
+Use `update-models` to replace an initialized project's model allowlist.
+Only the Client can authorize this action; the trusted host may relay the
+actual decision. Require a fresh `status` revision and record the exact list,
+reason, and Client decision evidence:
+
+```json
+{
+  "actor": {"id": "actual-client-decision-context", "role": "client"},
+  "expected_revision": 95,
+  "models": ["gpt-6-astra", "gpt-5.4", "gpt-6.1-sol"],
+  "reason": "Authorize the current host model for this project",
+  "evidence": "Reference the actual Client authorization of this exact list"
+}
+```
+
+The revision and evidence above are illustrative, not authorization. `models`,
+`reason`, `evidence`, and `expected_revision` are mandatory. Models must be a
+nonempty, duplicate-free list of explicit non-Anthropic identifiers, containing
+only letters, digits, dots, underscores, colons, or hyphens and starting with a
+letter or digit. Auto routing is forbidden. The helper does not verify host
+model availability. Include existing models that should remain permitted.
+Unknown fields, invalid lists, stale revisions, and journal failures leave
+state and history unchanged.
+
+The action works while paused and after the run outcome is recorded, but not
+after closure. A closed run must enter `new-run` under its existing policy
+before an update. It does not resume work, extend limits, approve a package,
+change baselines/submissions/acceptance, or waive audits and findings.
+Previous actor role/model bindings remain immutable. A different actual model
+needs a genuinely separate host context; never relabel an existing context.
+Removed models cannot make subsequent agent mutations, but their earlier
+evidence remains valid history.
+
+Each update records the old/new lists, Client actor, reason, evidence, and
+transaction sequence in state and the append-only journal. Updates enter the
+current run audit scope, invalidating any completed run audit; sprint scope
+digests and sprint audits stay unchanged. Re-examine the run before closing,
+retaining all prior finding obligations. `new-run` retains the current policy
+and archives earlier updates with the previous run. To restore a prior list,
+make another Client-authorized update at the current revision, not a history
+rewrite. Never edit the database or loaded plugin copy to change policy.
+
 ## Short path through delivery
 
 1. **Discover:** GM clarifies high-level intent; BA asks targeted questions in

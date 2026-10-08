@@ -164,6 +164,218 @@ class StoreTests(unittest.TestCase):
         })
         self.call("approve", "client", versions=versions, evidence="Client accepts resolved package")
 
+    def update_models(self, models, **changes):
+        data = {
+            "actor": actor("client"), "models": models,
+            "expected_revision": self.store.load()[0],
+            "reason": "The host now uses GPT-6.1 Sol",
+            "evidence": "Client explicitly authorized GPT-6.1 Sol for this project",
+        }
+        data.update(changes)
+        return self.store.execute("update-models", data)
+
+    def test_model_update_preserves_accepted_delivery_and_actor_history(self):
+        sprint, fingerprint = self.finished()
+        self.audit(sprint)
+        self.call("accept", "client", sprint=sprint, digest=fingerprint, evidence="Accepted")
+        before = self.store.execute("context")
+        journal = self.store.execute("journal")["events"]
+        with self.assertRaisesRegex(ContractError, "permitted model list"):
+            self.store.execute("finish-run", {
+                "actor": actor("gm", "new-sol-gm", "gpt-6.1-sol"),
+                "outcome": "success", "reason": "Not yet authorized",
+            })
+        self.assertEqual(self.store.execute("context"), before)
+        self.assertEqual(self.store.execute("journal")["events"], journal)
+        result = self.update_models(["gpt-6-astra", "gpt-5.4", "gpt-6.1-sol"])
+        after = Store(self.project).execute("context")
+        self.assertEqual(result["revision"], before["revision"] + 1)
+        self.assertEqual(result["result"]["previous_models"], before["state"]["policy"]["models"])
+        self.assertEqual(result["result"]["sequence"], result["revision"])
+        for key, value in before["state"].items():
+            if key != "policy":
+                self.assertEqual(after["state"][key], value, key)
+        self.assertEqual(after["state"]["policy"]["limits"], before["state"]["policy"]["limits"])
+        self.assertEqual(after["state"]["model_policy_updates"], [result["result"]])
+        self.assertEqual(after["scope_digests"][sprint], before["scope_digests"][sprint])
+        self.assertNotEqual(after["scope_digests"]["run"], before["scope_digests"]["run"])
+        events = self.store.execute("journal")["events"]
+        self.assertEqual(events[:-1], journal)
+        self.assertEqual(events[-1]["action"], "update-models")
+        self.assertEqual(events[-1]["body"]["result"], result["result"])
+        self.assertEqual(events[-1]["body"]["request"]["evidence"], result["result"]["evidence"])
+        self.store.execute("finish-run", {
+            "actor": actor("gm", "new-sol-gm", "gpt-6.1-sol"),
+            "outcome": "success", "reason": "Accepted delivery retained",
+        })
+        with self.assertRaisesRegex(ContractError, "audit is not complete"):
+            self.call("close", handover="Missing final audit")
+        self.audit("run")
+        self.call("close", handover="Audited accepted delivery")
+
+    def test_model_update_requires_client_revision_and_decision_evidence(self):
+        before = self.store.execute("context")
+        journal = self.store.execute("journal")
+        for changes in [
+            {"actor": actor("gm")},
+            {"actor": actor("pm")},
+            {"actor": actor("client", "context-gm")},
+            {"expected_revision": before["revision"] - 1},
+            {"expected_revision": True},
+            {"reason": ""},
+            {"evidence": "   "},
+            {"limits": {"max_attempts": 99}},
+        ]:
+            with self.subTest(changes=changes), self.assertRaises(ContractError):
+                self.update_models(["gpt-6.1-sol"], **changes)
+            self.assertEqual(self.store.execute("context"), before)
+            self.assertEqual(self.store.execute("journal"), journal)
+        for missing in ["expected_revision", "reason", "evidence", "models"]:
+            data = {"actor": actor("client"), "models": ["gpt-6.1-sol"],
+                    "reason": "Authorized change", "evidence": "Client decision",
+                    "expected_revision": before["revision"]}
+            del data[missing]
+            with self.subTest(missing=missing), self.assertRaises(ContractError):
+                self.store.execute("update-models", data)
+        self.assertEqual(self.store.execute("context"), before)
+
+    def test_model_update_rejects_invalid_lists_atomically(self):
+        before = self.store.execute("context")
+        journal = self.store.execute("journal")
+        for models in [
+            [], None, "gpt-6.1-sol", [None], [1], [""], [" "],
+            ["gpt-6.1-sol", "gpt-6.1-sol"], ["auto"], ["Auto"], [" AUTO "],
+            ["claude-sonnet-5"], ["ANTHROPIC-model"], ["gpt-6.1-sol", "claude-opus-5"],
+            [" gpt-6.1-sol"], ["gpt-6.1-sol "], ["gpt 6.1 sol"], ["gpt\n6.1-sol"],
+        ]:
+            with self.subTest(models=models), self.assertRaises(ContractError):
+                self.update_models(models)
+            self.assertEqual(self.store.execute("context"), before)
+            self.assertEqual(self.store.execute("journal"), journal)
+
+    def test_model_update_removal_and_reauthorization_never_rebind_contexts(self):
+        before = self.store.load()[1]["contexts"]
+        self.update_models(["gpt-6.1-sol"])
+        self.assertEqual(self.store.load()[1]["contexts"]["context-gm"], before["context-gm"])
+        with self.assertRaisesRegex(ContractError, "permitted model list"):
+            self.call("pause", reason="Removed model")
+        with self.assertRaisesRegex(ContractError, "cannot change"):
+            self.store.execute("pause", {
+                "actor": actor("gm", "context-gm", "gpt-6.1-sol"), "reason": "Cannot relabel",
+            })
+        self.store.execute("pause", {
+            "actor": actor("gm", "sol-gm", "gpt-6.1-sol"), "reason": "New actual context",
+        })
+        self.update_models(["gpt-5.4"])
+        self.call("resume", reconciled=True, reason="Original model explicitly reauthorized")
+        updates = self.store.load()[1]["model_policy_updates"]
+        self.assertEqual(updates[1]["previous_models"], updates[0]["models"])
+        self.assertEqual(len(updates), 2)
+
+    def test_model_update_stales_run_audit_and_retains_finding_obligations(self):
+        self.call("finish-run", outcome="cancelled", reason="No implementation")
+        original = self.audit("run", findings=[{
+            "id": "R1", "summary": "Unresolved handover", "evidence": "Missing record",
+            "blocking": True,
+        }])
+        self.update_models(["gpt-5.4", "gpt-6.1-sol"])
+        self.assertEqual(self.store.execute("status")["run_audit"], "stale")
+        with self.assertRaisesRegex(ContractError, "audit is not complete"):
+            self.call("close", handover="Stale audit")
+        self.audit("run")
+        with self.assertRaisesRegex(ContractError, "run/audit-1/R1"):
+            self.call("close", handover="Original blocker still applies")
+        self.call("disposition", scope="run", audit=original["id"], finding="R1",
+                  decision="resolved", reason="Handover supplied")
+        self.call("close", handover="Complete")
+        before = self.store.execute("context")
+        with self.assertRaisesRegex(ContractError, "Run is closed"):
+            self.update_models(["gpt-6.1-sol"])
+        self.assertEqual(self.store.execute("context"), before)
+        self.call("new-run", intent="Next authorized run")
+        state = self.store.load()[1]
+        self.assertEqual(state["policy"]["models"], ["gpt-5.4", "gpt-6.1-sol"])
+        self.assertEqual(state["past_runs"][-1], {
+            key: value for key, value in before["state"].items() if key != "past_runs"
+        })
+        self.update_models(["gpt-5.4"])
+        self.assertEqual(self.store.load()[1]["past_runs"], state["past_runs"])
+
+    def test_model_update_journal_failure_rolls_back_policy_and_context(self):
+        before = self.store.execute("context")
+        journal = self.store.execute("journal")
+        with closing(sqlite3.connect(self.store.path)) as db, db:
+            db.execute("CREATE TRIGGER fail_policy BEFORE INSERT ON events "
+                       "WHEN NEW.action='update-models' "
+                       "BEGIN SELECT RAISE(ABORT, 'simulated policy journal failure'); END")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.update_models(["gpt-6.1-sol"])
+        self.assertEqual(self.store.execute("context"), before)
+        self.assertEqual(self.store.execute("journal"), journal)
+
+    def test_model_update_does_not_approve_or_resume_work(self):
+        self.call("pause", reason="Waiting for authorization")
+        self.update_models(["gpt-5.4", "gpt-6.1-sol"])
+        status = self.store.execute("status")
+        self.assertEqual(status["paused"], "Waiting for authorization")
+        self.assertIsNone(status["baseline"])
+        with self.assertRaisesRegex(ContractError, "Run is paused"):
+            self.call("start-sprint", goal="No authorization inferred")
+        self.call("resume", reconciled=True, reason="Host effects reconciled")
+        with self.assertRaisesRegex(ContractError, "require Client approval"):
+            self.call("start-sprint", goal="Policy is not package approval")
+        self.update_models(["gpt-5.4", "gpt-6-astra", "gpt-6.1-sol"])
+        sprint = self.sprint()
+        self.update_models(["gpt-5.4", "gpt-6.1-sol"])
+        self.submitted(sprint)
+        with self.assertRaises(ContractError):
+            self.call("finish-sprint", sprint=sprint, outcome="success",
+                      reason="Policy does not replace verification")
+
+    def test_concurrent_model_updates_have_exactly_one_winner(self):
+        revision = self.store.load()[0]
+
+        def update(model):
+            try:
+                Store(self.project).execute("update-models", {
+                    "actor": actor("client"), "models": [model],
+                    "expected_revision": revision, "reason": "Authorized replacement",
+                    "evidence": "Client decision for this exact list",
+                })
+                return "updated"
+            except ContractError:
+                return "rejected"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            self.assertCountEqual(list(executor.map(update, ["gpt-5.4", "gpt-6.1-sol"])),
+                                  ["updated", "rejected"])
+        self.assertEqual(self.store.load()[0], revision + 1)
+        self.assertEqual(len(self.store.load()[1]["model_policy_updates"]), 1)
+
+    def test_model_update_cli_schema_and_request_file(self):
+        result = subprocess.run([sys.executable, str(SCRIPTS / "autodev.py"), "help"],
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        schema = json.loads(result.stdout)["mutations"]["update-models"]
+        self.assertEqual(schema["roles"], ["client"])
+        self.assertEqual(set(schema["required"]), {"models", "reason", "evidence", "expected_revision"})
+        self.assertEqual(schema["optional"], [])
+        request = self.project / "policy-request.json"
+        data = {"actor": actor("client"), "models": ["gpt-5.4", "gpt-6.1-sol"],
+                "expected_revision": self.store.load()[0], "reason": "Actual host model",
+                "evidence": "Client explicitly authorized the listed models"}
+        request.write_text(json.dumps(data), encoding="utf-8")
+        command = [sys.executable, str(SCRIPTS / "autodev.py"), "update-models",
+                   "--project", str(self.project), "--input", str(request)]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["result"]["models"], data["models"])
+        before = self.store.execute("context")
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Stale state revision", json.loads(result.stderr)["error"])
+        self.assertEqual(self.store.execute("context"), before)
+
     def test_stale_assignment_cannot_submit(self):
         sprint = self.sprint()
         task = self.call("add-task", "pm", sprint=sprint, title="File", paths=["app.py"])

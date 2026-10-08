@@ -25,6 +25,7 @@ READ_ACTIONS = {"status", "journal", "inspect", "context", "focus", "materialize
 FOCUS_FIELDS = {"task", "sprint", "after", "feedback_after", "limit", "expected_revision"}
 COMMANDS = {
     "init": ("gm client", "intent limits", "models"),
+    "update-models": ("client", "models reason evidence expected_revision", ""),
     "artifact": ("ba architect pm", "kind content", ""),
     "challenge-package": ("reviewer", "versions passed evidence", ""),
     "approve": ("client", "versions evidence", ""),
@@ -201,7 +202,7 @@ class Store:
                     raise ContractError("Stale state revision; reload context before deciding")
                 if state["closed"] and action != "new-run":
                     raise ContractError("Run is closed; start a new run before changing it")
-                if state["outcome"] and action not in {"audit", "disposition", "close", "feedback", "new-run", "reopen"}:
+                if state["outcome"] and action not in {"audit", "disposition", "close", "feedback", "new-run", "reopen", "update-models"}:
                     raise ContractError("Run has finished; complete its audit/handover or start a new run")
                 known = state["contexts"].get(actor["id"])
                 if known and known != actor:
@@ -469,6 +470,8 @@ class Engine:
                 "feedback": [f for f in self.state["feedback"] if f["actor"]["role"] != "auditor"],
                 "improvements": self.state["improvements"],
                 "active_improvements": self.state["active_improvements"],
+                **({"model_policy_updates": self.state["model_policy_updates"]}
+                   if "model_policy_updates" in self.state else {}),
             }
         sprint = self.sprint(identifier)
         return {k: sprint[k] for k in ("id", "goal", "baseline", "tasks", "integration", "outcome")} | {
@@ -551,6 +554,21 @@ class Engine:
     def apply(self, action: str, data: dict) -> dict:
         method = getattr(self, "do_" + action.replace("-", "_"))
         return method(data)
+
+    def do_update_models(self, data: dict) -> dict:
+        models = strings(data, "models", nonempty=True)
+        if any(not model_allowed(model) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", model)
+               for model in models):
+            raise ContractError("Model policy must use explicit non-Anthropic model identifiers; no Auto routing")
+        record = {
+            "previous_models": self.state["policy"]["models"].copy(),
+            "models": models.copy(), "reason": text(data, "reason"),
+            "evidence": text(data, "evidence"), "actor": self.actor,
+            "sequence": self.sequence,
+        }
+        self.state.setdefault("model_policy_updates", []).append(record)
+        self.state["policy"]["models"] = models.copy()
+        return record
 
     def do_artifact(self, data: dict) -> dict:
         kind = text(data, "kind")

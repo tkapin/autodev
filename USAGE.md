@@ -11,6 +11,11 @@ The default GM model is `gpt-6-astra`; supporting roles use `gpt-5.4` and
 `gpt-6-astra`. Model availability depends on the account/host. Do not silently
 fall back to Auto routing or an Anthropic model. An operator can select another
 explicitly permitted model and align the project policy before executing work.
+For an initialized project, relay the Client's exact authorized allowlist
+through `update-models` with `models`, `reason`, `evidence`, and a fresh mandatory
+`expected_revision`. This is a Client-only policy decision, not permission to
+relabel a prior actor or bypass delivery/audit gates. See the operating guide
+for the request schema and retained history.
 
 ## Install locally
 
